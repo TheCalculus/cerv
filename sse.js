@@ -1,22 +1,30 @@
 function connectToSource() {
-    const source = new EventSource("[EVENT-SOURCE]");
-    if (source.readyState !== 1) return;
+    const source = new EventSource("http://localhost:8080/ooga_booga");
 
-    listenToSSE(source);
-    source.close();
+    source.onopen = () => {
+        console.log("connected to source, about to listen");
+        listenToSSE(source);
+    };
+
+    source.onerror = (error) => {
+        console.error("error occurred:", error);
+        source.close();
+    };
 }
 
 function listenToSSE(source) {
-    source.onmessage = (event) => { console.log(event, event.data); };
+    source.onmessage = (event) => {
+        console.log("message received:", event.data);
+    };
 
     source.addEventListener("JS_ELEMENT_RUN", (event) => {
-        const data      = JSON.parse(event.data);
+        const data = JSON.parse(event.data);
 
-        const target    = data.target;           // selector to... select the target
-        const callfront = data.callfront;        // javascript function to execute
-        const positions = data.positions;        // provides front and back of content that has to be replaced
+        const target = data.target;
+        const positions = data.positions;
+        const callfront = data.callfront;
 
-        WS_ELEMENT_SET(target, template, eval(callfront));
+        WS_ELEMENT_SET(target, positions, eval(callfront));
     });
 }
 

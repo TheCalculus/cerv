@@ -10,4 +10,4 @@ function WS_ELEMENT_SET(elementSelector, positions, content) {
     elem.innerHTML = elemCont;
 }
 
-WS_ELEMENT_SET("#target", [0, 3], "<span style='color: orange !important;'>ooga booga</span>");
+// WS_ELEMENT_SET("#target", [0, 3], "<span style='color: orange !important;'>ooga booga</span>");

@@ -1,0 +1,12 @@
+body {
+    background: #000;
+    color: white;
+    font-family: Arial;
+    font-weight: 100;
+}
+
+#target {
+    color: powderblue;
+    text-decoration: underline;
+    font-style: italic;
+}
