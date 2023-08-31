@@ -48,10 +48,5 @@ int main() {
     daemonise();
     server();
 
-    int daemon = 0;
-    while (daemon++ < 10) {
-        send_sse(client_fd, &count);
-    }
-
     return 0;
 }
