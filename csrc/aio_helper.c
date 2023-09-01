@@ -8,31 +8,42 @@
 
 #include "aio_helper.h"
 
-struct aiocb* ioreqs  = NULL;
-size_t        numreqs = 5;
-size_t        inxreqs = 0;
+aiocbptr ioreqs  = NULL;
+size_t   numreqs = 5;
+size_t   inxreqs = 0;
 
-struct aiocb* init_ioreqs() {
-    ioreqs = calloc(numreqs, sizeof(struct aiocb));
+aiocbptr init_ioreqs() {
+    ioreqs = (aiocbptr)calloc(numreqs, sizeof(struct aiocb));
     return ioreqs;
 }
 
-struct aiocb* generate_ioreq(int fd) {
-    memcpy(&ioreqs + inxreqs++, new_aio(fd), sizeof(struct aiocb));
-    return *(&ioreqs + inxreqs);
+aiocbptr add_ioreqs(aiocbptr aio) {
+    ioreqs[inxreqs++] = *aio;
+
+    if (inxreqs >= numreqs) {
+        numreqs += 5;
+        ioreqs = (aiocbptr)realloc(ioreqs, sizeof(struct aiocb) * numreqs);
+    }
+
+    return &ioreqs[inxreqs - 1];
 }
 
-struct aiocb* new_aio(int fd) {
-    struct aiocb* server_aiocb = (struct aiocb*)malloc(sizeof(struct aiocb));
+aiocbptr generate_ioreq(int fd) {
+    aiocbptr aio = new_aio(fd);
+    return add_ioreqs(aio);
+}
 
-    memset(server_aiocb, 0, sizeof(struct aiocb)); // any reason to use bzero() over this?
+aiocbptr new_aio(int fd) {
+    aiocbptr server_aiocb = (aiocbptr)malloc(sizeof(struct aiocb));
 
-    int          BUFSIZE = 0;
-    unsigned int sof_int = sizeof(BUFSIZE); // sizeof_int
+    memset(server_aiocb, 0, sizeof(struct aiocb));
+
+    int BUFSIZE = 0;
+    unsigned int sof_int = sizeof(BUFSIZE);
 
     getsockopt(fd, SOL_SOCKET, SO_RCVBUF, (void*)&BUFSIZE, &sof_int);
 
-    server_aiocb->aio_buf    = malloc(BUFSIZE + 1);
+    server_aiocb->aio_buf = malloc(BUFSIZE + 1);
     server_aiocb->aio_fildes = fd;
     server_aiocb->aio_nbytes = BUFSIZE;
     server_aiocb->aio_offset = 0;
@@ -42,29 +53,33 @@ struct aiocb* new_aio(int fd) {
     return server_aiocb;
 }
 
-ssize_t async_read(int fd, char* buffer, size_t count) {
-    struct aiocb* cbp = generate_ioreq(fd);
+ssize_t async_oper(int fd, char* buffer, size_t count, async_operation operation) {
+    aiocbptr cbp = generate_ioreq(fd);
 
-    cbp->aio_buf      = buffer;
-    cbp->aio_nbytes   = count;
-    
-    int retval        = aio_read(cbp); 
-    return retval;
-};
+    cbp->aio_buf = malloc(count);
+    memcpy((void*)cbp->aio_buf, buffer, count);
 
-// TODO: minimise code repetition, should be trivial
+    cbp->aio_nbytes = count;
 
-ssize_t async_write(int fd, char* buffer, size_t count) {
-    struct aiocb* cbp = generate_ioreq(fd);
-   
-    cbp->aio_buf      = buffer;
-    cbp->aio_nbytes   = count;
-   
-    int retval        = aio_write(cbp); 
-    return retval;
-};
+    int retval = 0;
+
+    switch (operation) {
+    case ASYNC_READ:
+        printf("commencing with aio_read\n");
+        retval = aio_read(cbp);
+        break;
+    case ASYNC_WRITE:
+        printf("commencing with aio_write\n");
+        retval = aio_write(cbp);
+        break;
+    }
+
+    while (retval == EINPROGRESS);
+
+    ssize_t result = aio_return(cbp);
+    return  result;
+}
 
 void free_ioreqs() {
-    for (int i = 0; i < inxreqs; i++) { free(&ioreqs[i]); }
     free(ioreqs);
-};
+}

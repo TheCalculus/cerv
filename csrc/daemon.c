@@ -46,7 +46,7 @@ static void daemonise() {
 }
 
 int main() {
-    daemonise();
+//    daemonise();
     server();
 
     free_ioreqs();
