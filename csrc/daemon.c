@@ -11,7 +11,6 @@
 #include <syslog.h>
 #include <unistd.h>
 
-#include "aio_helper.h"
 #include "sse_helper.h"
 
 #define SSE_PATH "/ooga_booga"
@@ -49,6 +48,5 @@ int main() {
 //    daemonise();
     server();
 
-    free_ioreqs();
     return 0;
 }
