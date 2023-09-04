@@ -97,12 +97,15 @@ int server() {
     while (RUNNING) {
         EXITIFTRU((result = kevent(kq, NULL, 0, &tevent, 1, NULL)) == -1);
 
+        int HAS_CLOSED = 0;
+
         for (int i = 0; i < result; i++) {
             int fd = (int)((&tevent)[i].ident);
 
             if ((&tevent)[i].flags & EV_EOF) {
                 printf("%d disconnected\n", fd);
-                close(fd);
+                handle_disconnect(fd);
+                HAS_CLOSED = 1;
             }
             else if
             (fd == server_fd) {
@@ -138,6 +141,7 @@ int server() {
                                        "Content-Type: text/event-stream\r\n"
                                        "Cache-Control: no-cache\r\n"
                                        "Connection: keep-alive\r\n"
+                                       "Content: \"beginning_sse\"\r\n"
                                        "Access-Control-Allow-Origin: *\r\n\r\n";
 
                 write(fd, response, strlen(response));
@@ -158,7 +162,7 @@ int server() {
                 printf("%ld bytes written\n", bytes_written);
             }
 
-            send_sse_all();
+            if (HAS_CLOSED) continue;
         }
     }
 
