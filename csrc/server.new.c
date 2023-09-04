@@ -11,36 +11,59 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#define PORT          8080
-#define MAX_CLIENTS   100
+#include "sse_helper.h"
 
-#define ASSERTNOT(VAL)                                  \
-    if (VAL) {                                         \
-        char buffer[50];                               \
-        snprintf(buffer, sizeof(buffer),               \
-                "ln %d, %s(...)", __LINE__, __func__); \
-        perror(buffer);                                \
-        exit(1);                                       \
+#define PORT          8080
+
+struct kevent  event , tevent;
+int            COUNT , server_fd , client_fds[MAX_CLIENTS],
+               kq    , result    , client_count = 0;
+volatile int   RUNNING = 1;
+
+
+// if VAL is true, then the program will consider it an error
+#define EXITIFTRU(VAL)                                     \
+    if (VAL) {                                             \
+        char buffer[50];                                   \
+        snprintf(buffer, sizeof(buffer),                   \
+                "ln %d, %s(...)", __LINE__, __func__);     \
+        perror(buffer);                                    \
+        exit(1);                                           \
     }
 
-int RUNNING = 1;
 
-void handle_sigint(int signum) { RUNNING = 0; }
-void handle_disconnect(int fd, int kq, struct kevent* event, int* client_fds, int* client_count) {
+static void handle_sigint(int signum) { RUNNING = 0; }
+
+static void
+handle_disconnect(int fd) {
     printf("%d disconnected\n", fd);
     close(fd);
 
     EV_SET   (&event, fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
-    ASSERTNOT(kevent(kq, event, 1, NULL, 0, NULL) == -1);
+    EXITIFTRU(kevent(kq, &event, 1, NULL, 0, NULL) == -1);
 
-    for (int j = 0; j < *client_count; j++) {
+    for (int j = 0; j < client_count; j++) {
         if (client_fds[j] != fd) continue;
 
-        for (int k = j; k < *client_count - 1; k++)
+        for (int k = j; k < client_count - 1; k++)
             client_fds[k] = client_fds[k + 1];
 
-        (*client_count)--;
+        client_count--;
         break;
+    }
+}
+
+inline void send_sse(int fd) {
+    COUNT++;
+
+    EV_SET   (&event, fd, EVFILT_WRITE, EV_ADD, 0, 0, NULL);
+    EXITIFTRU(kevent(kq, &event, 1, NULL, 0, NULL) == -1);
+}
+
+inline void send_sse_all() {
+    for (int j = 0; j < client_count; j++) {
+        int fd = client_fds[j];
+        send_sse(fd);
     }
 }
 
@@ -48,11 +71,14 @@ int server() {
     signal(SIGINT, handle_sigint);
 
     struct sockaddr_in server_addr , client_addr;
-    struct kevent      event       , tevent;
-    int                server_fd   , client_fds[MAX_CLIENTS],
-                       kq          , result , client_count = 0;
 
-    ASSERTNOT((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == -1);
+    /*    sse_helper.h, initialised line 19 
+     *    extern struct kevent  event , tevent;
+     *    extern int            COUNT , server_fd , client_fds[MAX_CLIENTS],
+     *                          kq    , result    , client_count;
+     */
+
+    EXITIFTRU((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == -1);
 
     memset  (&server_addr, 0, sizeof(server_addr));
 
@@ -60,16 +86,16 @@ int server() {
     server_addr.sin_addr.s_addr = INADDR_ANY;
     server_addr.sin_port        = htons(PORT);
 
-    ASSERTNOT(bind(server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) == -1);
-    ASSERTNOT(listen(server_fd, 5) == -1);
+    EXITIFTRU(bind(server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) == -1);
+    EXITIFTRU(listen(server_fd, 5) == -1);
 
-    ASSERTNOT((kq = kqueue()) == -1);
+    EXITIFTRU((kq = kqueue()) == -1);
 
     EV_SET   (&event, server_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
-    ASSERTNOT(kevent(kq, &event, 1, NULL, 0, NULL) == -1);
+    EXITIFTRU(kevent(kq, &event, 1, NULL, 0, NULL) == -1);
 
     while (RUNNING) {
-        ASSERTNOT((result = kevent(kq, NULL, 0, &tevent, 1, NULL)) == -1);
+        EXITIFTRU((result = kevent(kq, NULL, 0, &tevent, 1, NULL)) == -1);
 
         for (int i = 0; i < result; i++) {
             int fd = (int)((&tevent)[i].ident);
@@ -85,13 +111,13 @@ int server() {
                 socklen_t client_len = sizeof(client_addr);
                 int       client_fd = 0;
 
-                ASSERTNOT((client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_len)) == -1);
+                EXITIFTRU((client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_len)) == -1);
 
                 EV_SET   (&event, client_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
-                ASSERTNOT(kevent(kq, &event, 1, NULL, 0, NULL) == -1);
+                EXITIFTRU(kevent(kq, &event, 1, NULL, 0, NULL) == -1);
 
-                int flags    = fcntl (client_fd, F_GETFL, 0);
-                /* nonblock */ fcntl (client_fd, F_SETFL, flags | O_NONBLOCK);
+                int flags    = fcntl(client_fd, F_GETFL, 0);
+                /* nonblock */ fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
 
                 client_fds[client_count++] = client_fd;
             }
@@ -101,7 +127,7 @@ int server() {
                 ssize_t request_len = recv(fd, request, sizeof(request), 0);
 
                 if (request_len <= 0) {
-                    handle_disconnect(fd, kq, &event, client_fds, &client_count);
+                    handle_disconnect(fd);
                     continue;
                 }
 
@@ -116,11 +142,30 @@ int server() {
 
                 write(fd, response, strlen(response));
             }
+            else if
+            ((&tevent)[i].filter == EVFILT_WRITE) {
+                char response[512];
+
+                snprintf(response, sizeof(response),
+                        "event: JS_ELEMENT_RUN\ndata: { \"target\": \"#target\","
+                        "\"positions\": [0, 3],"
+                        "\"callfront\": %d }\n\n",
+                        COUNT++);
+
+                ssize_t bytes_written = write(fd, response, strlen(response));
+                EXITIFTRU(bytes_written == -1);
+
+                printf("%ld bytes written\n", bytes_written);
+            }
+
+            send_sse_all();
         }
     }
 
     for (int j = 0; j < client_count; j++) close(client_fds[j]);
+
     close(server_fd);
+    close(kq);
 
     return 0;
 }
