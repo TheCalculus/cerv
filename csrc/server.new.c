@@ -13,7 +13,7 @@
 
 #include "sse_helper.h"
 
-#define PORT          8080
+#define PORT   8080
 
 struct kevent  event , tevent;
 int            COUNT , server_fd , client_fds[MAX_CLIENTS],
@@ -32,7 +32,10 @@ volatile int   RUNNING = 1;
     }
 
 
-static void handle_sigint(int signum) { RUNNING = 0; }
+static void handle_sigint(int signum) { 
+    printf("SIGINT\n");
+    RUNNING = 0;
+}
 
 static void
 handle_disconnect(int fd) {
@@ -53,22 +56,17 @@ handle_disconnect(int fd) {
     }
 }
 
-inline void send_sse(int fd) {
+inline void
+send_sse(int fd) {
     COUNT++;
 
     EV_SET   (&event, fd, EVFILT_WRITE, EV_ADD, 0, 0, NULL);
     EXITIFTRU(kevent(kq, &event, 1, NULL, 0, NULL) == -1);
 }
 
-inline void send_sse_all() {
-    for (int j = 0; j < client_count; j++) {
-        int fd = client_fds[j];
-        send_sse(fd);
-    }
-}
-
 int server() {
     signal(SIGINT, handle_sigint);
+    signal(SIGSTOP, handle_sigint);
 
     struct sockaddr_in server_addr , client_addr;
 
@@ -79,8 +77,7 @@ int server() {
      */
 
     EXITIFTRU((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == -1);
-
-    memset  (&server_addr, 0, sizeof(server_addr));
+    memset   (&server_addr, 0, sizeof(server_addr));
 
     server_addr.sin_family      = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
@@ -97,15 +94,13 @@ int server() {
     while (RUNNING) {
         EXITIFTRU((result = kevent(kq, NULL, 0, &tevent, 1, NULL)) == -1);
 
-        int HAS_CLOSED = 0;
-
         for (int i = 0; i < result; i++) {
             int fd = (int)((&tevent)[i].ident);
+            send_sse(fd);
 
             if ((&tevent)[i].flags & EV_EOF) {
                 printf("%d disconnected\n", fd);
-                handle_disconnect(fd);
-                HAS_CLOSED = 1;
+                close(fd);
             }
             else if
             (fd == server_fd) {
@@ -127,7 +122,7 @@ int server() {
             else if
             ((&tevent)[i].filter == EVFILT_READ) {
                 char    request[1024];
-                ssize_t request_len = recv(fd, request, sizeof(request), 0);
+                ssize_t request_len = read(fd, request, sizeof(request));
 
                 if (request_len <= 0) {
                     handle_disconnect(fd);
@@ -141,7 +136,7 @@ int server() {
                                        "Content-Type: text/event-stream\r\n"
                                        "Cache-Control: no-cache\r\n"
                                        "Connection: keep-alive\r\n"
-                                       "Content: \"beginning_sse\"\r\n"
+                                       "Data: \"beginning_sse\"\r\n"
                                        "Access-Control-Allow-Origin: *\r\n\r\n";
 
                 write(fd, response, strlen(response));
@@ -161,8 +156,6 @@ int server() {
 
                 printf("%ld bytes written\n", bytes_written);
             }
-
-            if (HAS_CLOSED) continue;
         }
     }
 
@@ -170,6 +163,8 @@ int server() {
 
     close(server_fd);
     close(kq);
+
+    printf("all clients disconnected, server closed, kqueue closed\n");
 
     return 0;
 }

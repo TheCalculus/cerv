@@ -4,8 +4,7 @@
 #define MAX_CLIENTS 100
 
 int         server            ();
-void        send_sse          (int fd);
-void        send_sse_all      ();
+inline void send_sse          (int fd);
 static void handle_sigint     (int signum);
 static void handle_disconnect (int fd);
 
